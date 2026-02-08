@@ -1,168 +1,181 @@
 import requests
 from bs4 import BeautifulSoup
 from transformers import pipeline
-import os
-import time
 import datetime
+import os
 import sys
+import time
 
 # ==========================================
-# KONFIGURASI PRIBADI 
+# KONFIGURASI 
 # ==========================================
+TOKEN_TELEGRAM = "GANTI_DENGAN_TOKEN_BOTFATHER_DISINI"
+CHAT_ID = "GANTI_DENGAN_ID_ANGKA_KAMU_DISINI"
+
+# Ambil dari Environment Variable (GitHub Secrets)
 TOKEN = os.environ.get("TOKEN_TELEGRAM") or TOKEN_TELEGRAM
 ID_TUJUAN = os.environ.get("CHAT_ID") or CHAT_ID
 
-# ==========================================
-# DAFTAR PANTAUAN (ULTIMATE LIST 30+ KOIN)
-# ==========================================
+# DAFTAR KOIN (Sesuai Tag Cointelegraph)
+# Catatan: Nama harus sesuai juga dengan ID di CoinGecko agar harganya muncul
 COINS = [
-    # --- 👑 THE KINGS (Market Movers) ---
-    "bitcoin", "ethereum", "binance-coin", "solana", "xrp",
-    
-    # --- 🐸 MEME COINS (High Volatility) ---
-    "dogecoin", "shiba-inu", "pepecoin", "bonk", "floki", "dogwifhat",
-    
-    # --- 🤖 AI & DATA (Trending Sektor) ---
-    "artificial-intelligence", # Tag gabungan berita AI
-    "fetch-ai", "render-token", "near-protocol", "the-graph",
-    
-    # --- ⚡ LAYER 1 & INFRA (Fundamental) ---
-    "sui", "sei", "aptos", "avalanche", "cardano", 
-    "polkadot", "tron", "toncoin", "chainlink",
-    
-    # --- 🔗 DEFI & LAYER 2 ---
-    "uniswap", "polygon", "arbitrum", "optimism", "litecoin"
+    "bitcoin", "ethereum", "binancecoin", "solana", "ripple", 
+    "dogecoin", "shiba-inu", "pepe", "floki", 
+    "fetch-ai", "render-token", "near", 
+    "sui", "sei", "aptos", "avalanche-2", "cardano", 
+    "polkadot", "tron", "the-open-network", "chainlink",
+    "uniswap", "matic-network", "arbitrum", "optimism", "litecoin"
 ]
+
+# Mapping manual jika nama di Berita beda dengan nama di CoinGecko
+# Format: "tag_berita": "id_coingecko"
+MAPPING_ID = {
+    "binance-coin": "binancecoin",
+    "xrp": "ripple",
+    "pepecoin": "pepe",
+    "near-protocol": "near",
+    "toncoin": "the-open-network",
+    "polygon": "matic-network",
+    "avalanche": "avalanche-2"
+}
 
 class CryptoSuperAgent:
     def __init__(self):
         print("🤖 Menginisialisasi Otak AI (FinBERT)...")
-        print("   (Ini mungkin memakan waktu 30-60 detik di awal)")
         try:
             self.analyzer = pipeline("sentiment-analysis", model="ProsusAI/finbert")
-            print("✅ Model AI Siap!")
         except Exception as e:
             print(f"❌ Gagal load model: {e}")
             sys.exit()
 
     def kirim_telegram(self, pesan):
-        """Mengirim pesan ke Telegram"""
         if "GANTI" in TOKEN or "GANTI" in ID_TUJUAN:
-            print("❌ ERROR: Token/ID belum diisi! Edit file main.py dulu.")
+            print("❌ Token/ID belum diisi.")
             return
 
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         data = {"chat_id": ID_TUJUAN, "text": pesan, "parse_mode": "Markdown"}
+        requests.post(url, data=data)
+
+    def ambil_harga_global(self):
+        """Mengambil harga semua koin sekaligus dari CoinGecko"""
+        print("💰 Mengambil data harga terbaru...")
+        
+        # Gabungkan semua koin jadi satu string untuk request API
+        # Kita perlu memastikan ID-nya benar (pakai mapping jika ada)
+        list_id = []
+        for c in COINS:
+            real_id = MAPPING_ID.get(c, c) # Cek mapping, kalau gak ada pake nama asli
+            list_id.append(real_id)
+            
+        ids_string = ",".join(list_id)
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids_string}&vs_currencies=usd&include_24hr_change=true"
         
         try:
-            requests.post(url, data=data)
-            print("📨 Laporan terkirim ke Telegram.")
+            response = requests.get(url, timeout=10)
+            return response.json()
         except Exception as e:
-            print(f"❌ Gagal kirim Telegram: {e}")
+            print(f"❌ Gagal ambil harga: {e}")
+            return {}
 
     def baca_berita(self, coin):
-        """Membaca berita terbaru dari Cointelegraph"""
-        url = f"https://cointelegraph.com/tags/{coin}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
+        # Kalau ada mapping, kembalikan ke tag berita aslinya
+        # Contoh: CoinGecko butuh 'ripple', tapi Cointelegraph butuh 'xrp'
+        tag_berita = coin
+        for k, v in MAPPING_ID.items():
+            if v == coin: tag_berita = k
+
+        url = f"https://cointelegraph.com/tags/{tag_berita}"
+        headers = {"User-Agent": "Mozilla/5.0"}
         
         try:
             response = requests.get(url, headers=headers, timeout=10)
             soup = BeautifulSoup(response.text, 'html.parser')
             headlines = []
-            
-            # Cari elemen judul berita (selector bisa berubah tergantung website)
             items = soup.find_all("span", class_="post-card-inline__title")
-            
-            # Ambil maksimal 2 berita terbaru per koin agar proses cepat
             for item in items[:2]:
-                text = item.get_text().strip()
-                headlines.append(text)
-                
+                headlines.append(item.get_text().strip())
             return headlines
-        except Exception as e:
-            # Error silent agar tidak mengganggu loop koin lain
+        except:
             return []
 
     def jalankan_misi(self):
-        # Tambah 7 jam untuk WIB, atau 8 jam untuk WITA
-        waktu_skrg = (datetime.datetime.now() + datetime.timedelta(hours=7)).strftime('%d-%m-%Y %H:%M')
-        print(f"\n🔍 MEMULAI PATROLI PASAR ({waktu_skrg})")
-        print("=" * 40)
+        # 1. Atur Waktu (UTC+8 Untuk WITA / UTC+7 Untuk WIB)
+        # Ganti hours=8 jika kamu di Bali/Kalsel/Sulawesi
+        # Ganti hours=7 jika kamu di Jawa/Sumatera/Kalbar
+        jam_sekarang = (datetime.datetime.now() + datetime.timedelta(hours=8)).strftime('%H:%M')
+        tanggal = (datetime.datetime.now() + datetime.timedelta(hours=8)).strftime('%d-%m-%Y')
         
-        laporan_final = f"🤖 *LAPORAN PASAR CRYPTO*\n📅 {waktu_skrg}\n"
+        print(f"\n🔍 MEMULAI PATROLI ({jam_sekarang})")
+        
+        # 2. Ambil Harga Dulu (Sekali request buat semua)
+        data_harga = self.ambil_harga_global()
+        
+        laporan_final = f"🤖 *UPDATE PASAR & HARGA*\n📅 {tanggal} | ⏰ {jam_sekarang} WITA\n"
         laporan_final += "----------------------------------\n"
         
         jumlah_sinyal = 0
-        jumlah_netral = 0
         koin_diproses = 0
 
-        for coin in COINS:
+        # Loop setiap koin
+        for raw_coin in COINS:
             koin_diproses += 1
-            # Tampilkan progress di terminal (biar gak dikira hang)
-            print(f"[{koin_diproses}/{len(COINS)}] Memantau: {coin.upper()}...", end="\r")
             
-            berita_list = self.baca_berita(coin)
-            if not berita_list: 
-                continue
+            # Cek ID CoinGecko yang benar
+            coin_id = MAPPING_ID.get(raw_coin, raw_coin)
+            
+            # Ambil data harga
+            info_harga = data_harga.get(coin_id, {})
+            harga_usd = info_harga.get('usd', 0)
+            perubahan_24h = info_harga.get('usd_24h_change', 0)
+            
+            # Format Harga: $10,000 (+5.2%)
+            icon_harga = "🟢" if perubahan_24h >= 0 else "🔴"
+            str_harga = f"${harga_usd:,.2f} ({icon_harga}{perubahan_24h:.2f}%)"
 
+            # Baca Berita
+            print(f"[{koin_diproses}/{len(COINS)}] Cek: {raw_coin.upper()}...", end="\r")
+            berita_list = self.baca_berita(raw_coin)
+            
             score = 0
             detail_berita = ""
             
-            # Analisa setiap judul berita
-            for judul in berita_list:
-                hasil = self.analyzer(judul)[0]
-                label = hasil['label']
-                
-                # Scoring Sederhana
-                if label == 'positive': 
-                    score += 1
-                    icon = "📈"
-                elif label == 'negative': 
-                    score -= 1
-                    icon = "📉"
-                else:
-                    icon = "➖"
-                
-                # Simpan judul berita jika sentimennya KUAT (Bukan Netral)
-                # Agar kita tau ALASAN kenapa dia Bullish/Bearish
-                if label != 'neutral':
-                    # Potong judul jika terlalu panjang (>40 karakter)
-                    judul_pendek = (judul[:40] + '..') if len(judul) > 40 else judul
-                    detail_berita += f"{icon} {judul_pendek}\n"
+            # Analisa Sentimen
+            if berita_list:
+                for judul in berita_list:
+                    hasil = self.analyzer(judul)[0]
+                    label = hasil['label']
+                    
+                    if label == 'positive': score += 1
+                    elif label == 'negative': score -= 1
+                    
+                    if label != 'neutral':
+                        icon = "📈" if label == 'positive' else "📉"
+                        detail_berita += f"{icon} {judul[:30]}..\n"
 
-            # --- LOGIKA FILTER ---
-            if score > 0:
-                status = "BULLISH 🔥"
-                laporan_final += f"\n🪙 *{coin.upper()}* -> {status}\n{detail_berita}"
+            # --- LOGIKA LAPORAN ---
+            # Tampilkan jika: 
+            # 1. Ada Sinyal Kuat (Bullish/Bearish)
+            # 2. ATAU Perubahan harga drastis (> 5% atau < -5%) meskipun berita netral
+            
+            if score != 0 or abs(perubahan_24h) > 5:
+                status = "NETRAL 💤"
+                if score > 0: status = "BULLISH 🔥"
+                elif score < 0: status = "BEARISH 🩸"
+                
+                # Header per Koin
+                laporan_final += f"\n🪙 *{raw_coin.upper()}*\n💵 {str_harga}\nSinyal: {status}\n{detail_berita}"
                 jumlah_sinyal += 1
-            elif score < 0:
-                status = "BEARISH 🩸"
-                laporan_final += f"\n🪙 *{coin.upper()}* -> {status}\n{detail_berita}"
-                jumlah_sinyal += 1
-            else:
-                jumlah_netral += 1
         
-        print("\n" + "=" * 40)
-        print("✅ Analisis Selesai.")
+        print("\n✅ Selesai.")
 
-        # --- KIRIM LAPORAN ---
-        # Kondisi 1: Ada sinyal kuat (Bullish/Bearish)
         if jumlah_sinyal > 0:
             laporan_final += "\n----------------------------------"
-            laporan_final += f"\nℹ️ _Info: {jumlah_netral} koin lainnya sedang Netral (Wait & See)_"
+            laporan_final += "\n_Filter: Hanya menampilkan koin dengan sinyal kuat atau volatilitas tinggi._"
             self.kirim_telegram(laporan_final)
-        
-        # Kondisi 2: Semua pasar Netral (Sepi)
         else:
-            pesan_sepi = f"🤖 *LAPORAN PASAR SEPI*\n📅 {waktu_skrg}\n\nSemua {len(COINS)} koin terpantau NETRAL/SIDEWAYS.\nTidak ada gejolak berita signifikan."
-            print("Pasar sepi, mengirim laporan singkat...")
-            self.kirim_telegram(pesan_sepi)
+            print("Pasar tenang. Tidak kirim laporan.")
 
-# --- EKSEKUSI UTAMA ---
 if __name__ == "__main__":
     agent = CryptoSuperAgent()
     agent.jalankan_misi()
-
-    print("🏁 Program Selesai.")
